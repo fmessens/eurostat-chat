@@ -13,9 +13,9 @@ def chatbot_blueprint(chatapp_index):
         username = user['name']
         is_authenticated = True
         return render_template("account.html",
-                                username=username,
-                                email=email,
-                                is_authenticated=is_authenticated)
+                               username=username,
+                               email=email,
+                               is_authenticated=is_authenticated)
 
     @chatbot_bp.route("/chat")
     @requires_auth
@@ -24,6 +24,6 @@ def chatbot_blueprint(chatapp_index):
         user['uid'] = user['aud']
         strindex = chatapp_index
         return render_template_string(strindex,
-                                    username=user['name'],
-                                    is_authenticated=True)
+                                      username=user['name'],
+                                      is_authenticated=True)
     return chatbot_bp
