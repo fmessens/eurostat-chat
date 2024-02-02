@@ -38,13 +38,11 @@ mistral_api_key = os.environ.get("MISTRAL_API_KEY")
 chat = ChatMistralAI(mistral_api_key=mistral_api_key)
 
 def first_prompt(query):
-    messages = [SystemMessage(content="We will have a conversation about the eurostat database. \
-The end result of the conversation should be a simple as possible single SQL query to answer the following question.\
- Whenever you see that the question is out of scope, please say so.")]
-    return messages + [HumanMessage(content=f"What free form search queries \
-to make to find all data for answerring this question?\
- Please provide a list with queries in double quotes. \
-No SQL queries yet please.")]
+    return [HumanMessage(content=f"What free form search queries \
+to make to find all data for answerring the question:\n\n {query} \n\n\
+ The search engine is designed to search for tables in the eurostat database (so searching for eurostat is out of scope).\
+ Please provide a list with queries in double quotes.\
+ No SQL queries yet please.")]
 
 
 def get_mistral_answer(full_content, prompt, set_progress):
@@ -83,7 +81,7 @@ def second_prompt(aicontent):
         full_context += r['text'] + '\n'
 
     messages = [HumanMessage(content=f"Here are a list of resulting tables based on your search queries:\
-'{full_context}'. Give a list of tables in double quotes that you think are relevant to the question.\
+'{full_context}'. Give a list of table codes in double quotes that you think are relevant to the question.\
  Please nothing else in double quotes.")]
     return messages
 
@@ -101,12 +99,18 @@ def third_prompt(aicontent):
     cols = pd.read_sql(f"SELECT * FROM {org_name}.column_metatdata \
     WHERE table_code IN {matchstr};", new_db_conn)
     markdown_table = cols.to_markdown()
-    full_prompt = [HumanMessage(content=f"Given the column and table info in the following table:\n\
+    full_prompt = [HumanMessage(content=f'Given the column and table info in the following table:\n\
 {markdown_table}. \n\
-List the columns to use for answering the question. Please list items in duoble quotes and nothing else.")]
-    return full_prompt
+List the columns to use for answering the question like this "<table_code>.<column_name>".\
+ Please list items in duoble quotes and nothing else.')]
+    return full_prompt, cols
 
 
-def fourth_prompt():
-    return [HumanMessage(content=f"Given the previous info can you construct a SQL query to answer the question?\
- Please provide a single SQL query and format in markdown.")]
+def fourth_prompt(aicontent, cols):
+    matches = list(set(re.findall(r'"(.*?)"', aicontent)))
+    colnames = [x.split('.')[-1] for x in matches]
+    colsm = cols[(cols['column_name'].isin(colnames))]
+    markdown_table = colsm.to_markdown()
+    return [HumanMessage(content=f"Given the following info: \n\n{markdown_table}\n\n\
+ can you construct a SQL query to answer the question?\
+ Please provide a SINGLE SQL query and format in markdown.")]

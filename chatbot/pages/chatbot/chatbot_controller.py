@@ -111,7 +111,8 @@ def init_callbacks(app):
         """
         messages += [chat.invoke(messages)]
         set_progress(json.dumps(bot_qp + prep_bot_content(messages)))
-        messages += third_prompt(messages[-1].content)
+        outprompt, cols = third_prompt(messages[-1].content)
+        messages += outprompt
         set_progress(json.dumps(bot_qp + prep_bot_content(messages)))
         """
         ai_content = ''
@@ -122,7 +123,7 @@ def init_callbacks(app):
         """
         messages += [chat.invoke(messages)]
         set_progress(json.dumps(bot_qp + prep_bot_content(messages)))
-        messages += fourth_prompt()
+        messages += fourth_prompt(messages[-1].content, cols)
         set_progress(json.dumps(bot_qp + prep_bot_content(messages)))
         messages += [chat.invoke(messages)]
         set_progress(json.dumps(bot_qp + prep_bot_content(messages)))
