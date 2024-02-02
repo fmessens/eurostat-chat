@@ -1,0 +1,18 @@
+<nav class="white" role="navigation">
+  <div class="nav-wrapper container">
+    <a id="logo-container" href="/" class="brand-logo">
+      <img src="/static/img/askeurope_logo.jpg" style="height: 64px">
+    </a>
+    <ul id="nav-mobile" class="right hide-on-med-and-down">
+      <li><a href="/" style="color: black">Home</a></li>
+      {% if is_authenticated %}
+        <li><a href="/account" style="color: black">{{username}}</a></li>
+        <li><a href="/logout" style="color: black">Logout</a></li>
+        <li><a href="/chat" style="color: black">Chat</a></li>
+      {% else %}
+        <li><a href="/signup" style="color: black">Register</a></li>
+        <li><a href="/login" style="color: black">Login</a></li>
+      {% endif %}
+    </ul>
+  </div>
+</nav>
