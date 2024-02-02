@@ -1,6 +1,6 @@
 import os
 
-samples_return = 8
+samples_return = 5
 
 postgresshost = 'localhost'
 pguser = 'postgres'

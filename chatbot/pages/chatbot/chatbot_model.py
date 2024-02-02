@@ -1,5 +1,6 @@
 import os
 from typing import List
+import re
 
 from langchain import hub
 from langchain.callbacks.manager import CallbackManagerForRetrieverRun
@@ -58,14 +59,16 @@ class CustomPGRetriever(BaseRetriever):
     def _get_relevant_documents(
         self, query: str, *, run_manager: CallbackManagerForRetrieverRun
     ) -> List[Document]:
-        docdf = self.get_pgdb_docs(query)
+        matches = list(set(re.findall(r'"(.*?)"', query)))
         documents = []
-        for r in docdf.to_dict('records'):
-            documents.append(Document(page_content=r['text'], 
-                                    metadata={k: v for k, v 
-                                                in r.items()
-                                                if k not in ('text',
-                                                                'embeddings')}))
+        for m in matches:
+            docdf = self.get_pgdb_docs(m)
+            for r in docdf.to_dict('records'):
+                documents.append(Document(page_content=r['text'], 
+                                        metadata={k: v for k, v 
+                                                    in r.items()
+                                                    if k not in ('text',
+                                                                    'embeddings')}))
         print(documents)
         return documents
     
@@ -87,11 +90,25 @@ mistral_api_key = os.environ.get("MISTRAL_API_KEY")
 llm = ChatMistralAI(mistral_api_key=mistral_api_key)
 contextualize_q_chain = contextualize_q_prompt | llm | StrOutputParser()
 
-def contextualized_question(input: dict):
+
+contextualize_q_system_prompt2 = "Given the question, formulate free form search\
+ queries that you would use to retrieve relevant eurostat tables. The search engine is\
+ specific for finding eurostat columns and related tables.\
+ Do NOT answer the question, just formulate the search queries and put them into double quotes.\
+ Put nothing else in double quotes."
+contextualize_q_prompt2 = ChatPromptTemplate.from_messages(
+    [
+        ("system", contextualize_q_system_prompt2),
+        ("human", "{question}"),
+    ]
+)
+contextualize_q_chain2 = contextualize_q_prompt2 | llm | StrOutputParser()
+
+def contextualized_questionhist(input: dict):
     if input.get("chat_history"):
         return contextualize_q_chain
     else:
-        return input["question"]
+        return contextualize_q_chain2
 
 def format_docs(docs):
     return "\n\n".join(doc.page_content for doc in docs)
@@ -119,7 +136,9 @@ retriever = CustomPGRetriever(postgresshost=postgresshost,
                                 model_ckpt=model_ckpt)
 rag_chain = (
     RunnablePassthrough.assign(
-        context=contextualized_question | retriever | format_docs
+        context=(contextualized_questionhist
+                 | retriever 
+                 | format_docs)
     )
     | qa_prompt
     | llm
