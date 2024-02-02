@@ -1,12 +1,14 @@
-#from langchain import OpenAI, ConversationChain
-#from langchain.memory import ConversationBufferMemory
-#from langchain.llms import OpenAI
 import os
-import re
-from numpy import full
+from typing import List
 
+from langchain import hub
+from langchain.callbacks.manager import CallbackManagerForRetrieverRun
+from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
+from langchain_core.output_parsers import StrOutputParser
+from langchain.schema.retriever import BaseRetriever
+from langchain_core.documents import Document
 import pandas as pd
-from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
+from langchain_core.runnables import RunnablePassthrough
 from langchain_mistralai.chat_models import ChatMistralAI
 from dotenv import load_dotenv
 import psycopg2
@@ -18,95 +20,108 @@ from settings import (samples_return,
                       postgresshost, 
                       pgport, 
                       pguser, 
-                      pgpassword)
+                      pgpassword,
+                      table)
 
-#adaptr#####
-org_name = 'eurostat_test'
-table = f'{org_name}.eurostat_metadata'
-###########
+class CustomPGRetriever(BaseRetriever):
+    def __init__(self,
+                 postgresshost: str,
+                 pgport: int,
+                 pguser: str,
+                 pgpassword: str,
+                 samples_return: int,
+                 model_ckpt: str):
+        super().__init__()
+        self.metadata = {'new_db_conn': psycopg2.connect(
+                            host=postgresshost,
+                            port=pgport,
+                            user=pguser,
+                            password=pgpassword,
+                            ),
+                        'samples_return': samples_return,
+                        'embedder': Embedder(model_ckpt)}
 
-embedder = Embedder(model_ckpt)
-
-""" chat = OpenAI(temperature=0)
-
-conversation = ConversationChain(
-    llm=chat, 
-    verbose=True,
-    memory=ConversationBufferMemory()
-) """
-mistral_api_key = os.environ.get("MISTRAL_API_KEY")
-chat = ChatMistralAI(mistral_api_key=mistral_api_key)
-
-def first_prompt(query):
-    messages = [SystemMessage(content="We will have a conversation about the eurostat database. \
-The end result of the conversation should be a simple as possible single SQL query to answer the following question.\
- Whenever you see that the question is out of scope, please say so.")]
-    return messages + [HumanMessage(content=f"What free form search queries \
-to make to find all data for answerring this question?\
- Please provide a list with queries in double quotes. \
-No SQL queries yet please.")]
-
-
-def get_mistral_answer(full_content, prompt, set_progress):
-    messages = [HumanMessage(content=prompt)]
-    for chunk in chat.stream(messages):
-        full_content += chunk.content
-        set_progress(full_content)
-    return full_content
-
-
-def second_prompt(aicontent):
-    new_db_conn = psycopg2.connect(
-        host=postgresshost,
-        port=pgport,
-        user=pguser,
-        password=pgpassword,
-    )
-    matches = list(set(re.findall(r'"(.*?)"', aicontent)))
-
-    # query the vector db
-    all_meta = []
-    for q in matches:
-        emb = embedder.get_embeddings(q)
+    def get_pgdb_docs(self, query: str) -> pd.DataFrame:
+        # Use your existing retriever to get the documents
+        tablestr = f'{table}'
+        emb = self.metadata['embedder'].get_embeddings(query)
         npemb = emb.detach().cpu().numpy()[0]
         emb_q = str(list(npemb))
         nn = pd.read_sql(f"SELECT *,\
-        1/(embeddings <-> '{emb_q}') as score \
-        FROM {table} ORDER BY \
-        embeddings <-> '{emb_q}' LIMIT {samples_return};", 
-                         new_db_conn)
-        all_meta.append(nn)
+                    1/(embeddings <-> '{emb_q}') as score \
+                    FROM {tablestr} A ORDER BY \
+                    embeddings <-> '{emb_q}' LIMIT {self.metadata['samples_return']};", 
+                                        self.metadata['new_db_conn'])
+        print(nn)
+        return nn
+    
+    def _get_relevant_documents(
+        self, query: str, *, run_manager: CallbackManagerForRetrieverRun
+    ) -> List[Document]:
+        docdf = self.get_pgdb_docs(query)
+        documents = []
+        for r in docdf.to_dict('records'):
+            documents.append(Document(page_content=r['text'], 
+                                    metadata={k: v for k, v 
+                                                in r.items()
+                                                if k not in ('text',
+                                                                'embeddings')}))
+        print(documents)
+        return documents
+    
 
-    all_meta_df = pd.concat(all_meta).drop_duplicates()
-    full_context = ''
-    for _, r in all_meta_df.iterrows():
-        full_context += r['text'] + '\n'
 
-    messages = [HumanMessage(content=f"Here are a list of resulting tables based on your search queries:\
-'{full_context}'. Give a list of tables in double quotes that you think are relevant to the question.\
- Please nothing else in double quotes.")]
-    return messages
+contextualize_q_system_prompt = """Given a chat history and the latest user question \
+which might reference context in the chat history, formulate a standalone question \
+which can be understood without the chat history. Do NOT answer the question, \
+just reformulate it if needed and otherwise return it as is."""
+contextualize_q_prompt = ChatPromptTemplate.from_messages(
+    [
+        ("system", contextualize_q_system_prompt),
+        MessagesPlaceholder(variable_name="chat_history"),
+        ("human", "{question}"),
+    ]
+)
 
+mistral_api_key = os.environ.get("MISTRAL_API_KEY")
+llm = ChatMistralAI(mistral_api_key=mistral_api_key)
+contextualize_q_chain = contextualize_q_prompt | llm | StrOutputParser()
 
-def third_prompt(aicontent):
-    new_db_conn = psycopg2.connect(
-        host=postgresshost,
-        port=pgport,
-        user=pguser,
-        password=pgpassword,
+def contextualized_question(input: dict):
+    if input.get("chat_history"):
+        return contextualize_q_chain
+    else:
+        return input["question"]
+
+def format_docs(docs):
+    return "\n\n".join(doc.page_content for doc in docs)
+
+qa_system_prompt = """You are an assistant for creating SQL queries. \
+Use the following pieces of retrieved context to construct the query. \
+If you don't know the answer, just say that you don't know. \
+Use a singe query that is as concise as possible and format as you would in markdown.\
+
+{context}"""
+
+qa_prompt = ChatPromptTemplate.from_messages(
+    [
+        ("system", qa_system_prompt),
+        MessagesPlaceholder(variable_name="chat_history"),
+        ("human", "{question}"),
+    ]
+)
+
+retriever = CustomPGRetriever(postgresshost=postgresshost,
+                                pgport=pgport,
+                                pguser=pguser,
+                                pgpassword=pgpassword,
+                                samples_return=samples_return,
+                                model_ckpt=model_ckpt)
+rag_chain = (
+    RunnablePassthrough.assign(
+        context=contextualized_question | retriever | format_docs
     )
-    matches = list(set(re.findall(r'"(.*?)"', aicontent)))
-    matchstr = str(tuple([x.replace('\\','').upper() 
-                          for x in matches]))
-    cols = pd.read_sql(f"SELECT * FROM {org_name}.column_metatdata \
-    WHERE table_code IN {matchstr};", new_db_conn)
-    markdown_table = cols.to_markdown()
-    full_prompt = [HumanMessage(content=f"Given the column and table info in the following table:\n\
-{markdown_table}. \n\
-List the columns to use for answering the question. Please list items in duoble quotes and nothing else.")]
-    return full_prompt
+    | qa_prompt
+    | llm
+)
 
-
-def fourth_prompt():
-    return [HumanMessage(content=f"Given the previous info can you construct a SQL query to answer the question?\
- Please provide a single SQL query and format in markdown.")]

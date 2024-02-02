@@ -3,15 +3,10 @@ import json
 
 from dash.dependencies import Input, Output, State
 import dash
+from langchain_core.messages import HumanMessage, AIMessage
 
 from chatbot.components.textbox import render_textbox
-from chatbot.pages.chatbot.chatbot_model import (first_prompt, 
-                                         chat,
-                                         second_prompt,
-                                         third_prompt,
-                                         fourth_prompt,
-#                                         execute_query
-                                         )
+from chatbot.pages.chatbot.chatbot_model import rag_chain
 
 def conditional_textbox(intxt, app):
     firstm = intxt.split(':')[0]
@@ -67,74 +62,31 @@ def init_callbacks(app):
     def clear_input(n_clicks, n_submit):
         return ""
     
-    @app.long_callback(
+    @app.callback(
         output=[Output(component_id="loading-component", 
-                       component_property="children")],
+                       component_property="children"),
+                Output(component_id="store-bot-conversation",
+                      component_property="data")],
         inputs=[Input(component_id="store-human-conversation", 
                       component_property="data")],
         state=[State(component_id="store-bot-conversation",
                      component_property="data")],
-        progress=Output(component_id="store-bot-conversation", 
-                        component_property="data"), 
-        running=[
-            (Output("submit", "disabled"), True, False),
-        ],
         prevent_initial_call=True,
     )
-    def run_chatbot(set_progress, human_q, bot_q):
+    def run_chatbot(human_q, bot_q):
         ctx = dash.callback_context
         if not ctx.triggered[0]["prop_id"]=="store-human-conversation.data":
-            return [False]
+            return [False, bot_q]
         bot_qp = json.loads(bot_q)
         human_qp = json.loads(human_q)
-        last_humanq = human_qp[-1]
-        messages = first_prompt(last_humanq)
-        print('first m: ', messages)
-        set_progress(json.dumps(bot_qp + prep_bot_content(messages)))
-        """
-        ai_content = ''
-        for chunk in chat.stream(messages):
-            ai_content += chunk.content
-            intermes = messages + [AIMessage(content=ai_content)]
-            set_progress(json.dumps(bot_qp + prep_bot_content(intermes)))
-        """
-        messages += [chat.invoke(messages)]
-        set_progress(json.dumps(bot_qp + prep_bot_content(messages)))
-        messages += second_prompt(messages[-1].content)
-        set_progress(json.dumps(bot_qp + prep_bot_content(messages)))
-        """
-        ai_content = ''
-        for chunk in chat.stream(messages):
-            ai_content += chunk.content
-            intermes = messages + [AIMessage(content=ai_content)]
-            set_progress(json.dumps(bot_qp + prep_bot_content(intermes)))
-        """
-        messages += [chat.invoke(messages)]
-        set_progress(json.dumps(bot_qp + prep_bot_content(messages)))
-        messages += third_prompt(messages[-1].content)
-        set_progress(json.dumps(bot_qp + prep_bot_content(messages)))
-        """
-        ai_content = ''
-        for chunk in chat.stream(messages):
-            ai_content += chunk.content
-            intermes = messages + [AIMessage(content=ai_content)]
-            set_progress(json.dumps(bot_qp + prep_bot_content(intermes)))
-        """
-        messages += [chat.invoke(messages)]
-        set_progress(json.dumps(bot_qp + prep_bot_content(messages)))
-        messages += fourth_prompt()
-        set_progress(json.dumps(bot_qp + prep_bot_content(messages)))
-        messages += [chat.invoke(messages)]
-        set_progress(json.dumps(bot_qp + prep_bot_content(messages)))
-        """
-        ai_content = ''
-        for chunk in chat.stream(messages):
-            ai_content += chunk.content
-            intermes = messages + [AIMessage(content=ai_content)]
-            set_progress(json.dumps(bot_qp + prep_bot_content(intermes)))
-        """
-        time.sleep(10)
-        return [False]
+        chat_history = []
+        for h,b in zip(human_qp[:-1], bot_qp):
+            chat_history.append(HumanMessage(content=h))
+            chat_history.append(AIMessage(content=b))
+        question = human_qp[-1]
+        ai_msg = rag_chain.invoke({"question": question, "chat_history": chat_history})
+        msgprep = json.dumps(bot_qp + prep_bot_content([ai_msg]))
+        return [False, msgprep]
     
 
     @app.callback(
