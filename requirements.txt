@@ -1,0 +1,26 @@
+--index-url https://download.pytorch.org/whl/cu118
+torch==1.13
+--index-url https://pypi.org/simple
+flask
+flask-wtf
+flask-sqlalchemy
+flask-migrate
+email-validator
+itsdangerous==2.0.1
+cron-validator
+python-dotenv
+psycopg2
+pandas
+google-cloud-storage
+google-cloud-scheduler
+firebase-admin
+authlib
+dash
+dash[celery]
+dash[diskcache]
+langchain
+langchain-mistralai
+dash-core-components
+transformers
+datasets
+tabulate
