@@ -1,9 +1,7 @@
-from gc import disable
+import time
 import json
 
-from distutils.util import execute
 from dash.dependencies import Input, Output, State
-from langchain_core.messages import HumanMessage, AIMessage
 import dash
 
 from chatbot.components.textbox import render_textbox
@@ -135,6 +133,7 @@ def init_callbacks(app):
             intermes = messages + [AIMessage(content=ai_content)]
             set_progress(json.dumps(bot_qp + prep_bot_content(intermes)))
         """
+        time.sleep(10)
         return [False]
     
 
