@@ -3,7 +3,8 @@
 #from langchain.llms import OpenAI
 import os
 import re
-from numpy import full
+import json
+import time
 
 import pandas as pd
 from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
@@ -35,7 +36,8 @@ conversation = ConversationChain(
     memory=ConversationBufferMemory()
 ) """
 mistral_api_key = os.environ.get("MISTRAL_API_KEY")
-chat = ChatMistralAI(mistral_api_key=mistral_api_key)
+chat = ChatMistralAI(mistral_api_key=mistral_api_key, timeout=240,
+                     temperature=0)
 
 def first_prompt(query):
     return [HumanMessage(content=f"What free form search queries \
@@ -53,7 +55,7 @@ def get_mistral_answer(full_content, prompt, set_progress):
     return full_content
 
 
-def second_prompt(aicontent):
+def second_prompt(aicontent, query):
     new_db_conn = psycopg2.connect(
         host=postgresshost,
         port=pgport,
@@ -78,15 +80,17 @@ def second_prompt(aicontent):
     all_meta_df = pd.concat(all_meta).drop_duplicates()
     full_context = ''
     for _, r in all_meta_df.iterrows():
-        full_context += r['text'] + '\n'
+        full_context += r['text'] + '\n\n\n'
 
-    messages = [HumanMessage(content=f"Here are a list of resulting tables based on your search queries:\
-'{full_context}'. Give a list of table codes in double quotes that you think are relevant to the question.\
+    messages = [HumanMessage(content=f"Here are a list of resulting tables based on your search queries:\n\
+'{full_context}'.\n\
+ Give a list of table codes in double quotes that you think are relevant to answer the question:\n\n\
+ {query} \n\n\
  Please nothing else in double quotes.")]
     return messages
 
 
-def third_prompt(aicontent):
+def third_prompt(aicontent, query):
     new_db_conn = psycopg2.connect(
         host=postgresshost,
         port=pgport,
@@ -98,19 +102,23 @@ def third_prompt(aicontent):
                           for x in matches]))
     cols = pd.read_sql(f"SELECT * FROM {org_name}.column_metatdata \
     WHERE table_code IN {matchstr};", new_db_conn)
-    markdown_table = cols.to_markdown()
+    full_content = ''
+    for r in cols.to_dict('records'):
+        full_content += json.dumps(r).replace('{','').replace('}','') +'\n\n'
     full_prompt = [HumanMessage(content=f'Given the column and table info in the following table:\n\
-{markdown_table}. \n\
-List the columns to use for answering the question like this "<table_code>.<column_name>".\
+{full_content}. \n\
+List the columns to use for answering the question:\n\n\
+ {query}.\n\n\
+ Please create a list of elements like this "<table_code>.<column_name>".\
  Please list items in duoble quotes and nothing else.')]
     return full_prompt, cols
 
 
-def fourth_prompt(aicontent, cols):
-    matches = list(set(re.findall(r'"(.*?)"', aicontent)))
-    colnames = [x.split('.')[-1] for x in matches]
-    colsm = cols[(cols['column_name'].isin(colnames))]
-    markdown_table = colsm.to_markdown()
-    return [HumanMessage(content=f"Given the following info: \n\n{markdown_table}\n\n\
- can you construct a SQL query to answer the question?\
+def fourth_prompt(aicontent, query):
+    return [HumanMessage(content=f"Given the following info: \
+\n\n{aicontent}\n\n\
+ Can you construct a SQL query to answer the question:\n\n\
+ {query}.\n\n\
  Please provide a SINGLE SQL query and format in markdown.")]
+
+

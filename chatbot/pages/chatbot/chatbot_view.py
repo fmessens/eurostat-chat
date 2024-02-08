@@ -6,6 +6,7 @@ from dash import html
 
 # import components
 from chatbot.components.input import render_chat_input
+from chatbot.pages.queryapp.queryview import layout
 
 
 # define layout
@@ -41,20 +42,23 @@ def render_chatbot():
                                         dbc.CardBody([
                                             chatbot_layout,
                                             html.Div(render_chat_input(),
-                                                     style={'margin-left': '70px', 
-                                                            'margin-right': '70px', 
+                                                     style={'margin-left': '70px',
+                                                            'margin-right': '70px',
                                                             'margin-bottom': '20px'}),
                                             html.Br(),
+                                            html.Br(),
+                                            html.Br(),
                                             dcc.Loading(id="loading-component", 
-                                                        type="circle", 
+                                                        type="circle",
                                                         children=html.Div(id="loading-output-1")),
                                         ])
+
                                     ],
                                     style={'border-radius': 25, 'background': '#FFFFFF', 'border': '0px solid'}
                                 )
                             ),
                             dbc.Col(width=1),
-                        ]
+                        layout]
                     )
                 ]
             ),

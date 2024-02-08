@@ -6,6 +6,7 @@ import diskcache
 # import pages
 from chatbot.pages.chatbot.chatbot_view import render_chatbot
 from chatbot.pages.chatbot.chatbot_controller import init_callbacks
+from chatbot.pages.queryapp.querycontroller import init_query_callb
 from chatbot.pages.page_not_found import page_not_found
 
 
@@ -27,4 +28,5 @@ def get_chatapp(flaskapp, url_base_pathname):
     )
     dash_app.layout = render_chatbot()
     init_callbacks(dash_app)
+    init_query_callb(dash_app)
     return dash_app

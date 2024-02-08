@@ -13,6 +13,7 @@ psycopg2
 pandas
 google-cloud-storage
 google-cloud-scheduler
+google-cloud-bigquery
 firebase-admin
 authlib
 dash
@@ -24,3 +25,4 @@ dash-core-components
 transformers
 datasets
 tabulate
+pandas-gbq

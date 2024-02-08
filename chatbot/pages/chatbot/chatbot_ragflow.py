@@ -1,0 +1,125 @@
+import os
+from typing import List
+
+from langchain import hub
+from langchain.callbacks.manager import CallbackManagerForRetrieverRun
+from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
+from langchain_core.output_parsers import StrOutputParser
+from langchain.schema.retriever import BaseRetriever
+from langchain_core.documents import Document
+import pandas as pd
+from langchain_core.runnables import RunnablePassthrough
+from langchain_mistralai.chat_models import ChatMistralAI
+from dotenv import load_dotenv
+import psycopg2
+load_dotenv()
+
+from chatbot.embedding.embed import Embedder
+from settings import (samples_return, 
+                      model_ckpt, 
+                      postgresshost, 
+                      pgport, 
+                      pguser, 
+                      pgpassword)
+
+org_name = 'eurostat_test'
+table2 = f'{org_name}.eurostat_metadata2'
+
+class CustomPGRetriever(BaseRetriever):
+    def __init__(self,
+                 postgresshost: str,
+                 pgport: int,
+                 pguser: str,
+                 pgpassword: str,
+                 samples_return: int,
+                 model_ckpt: str):
+        super().__init__()
+        self.metadata = {'new_db_conn': psycopg2.connect(
+                            host=postgresshost,
+                            port=pgport,
+                            user=pguser,
+                            password=pgpassword,
+                            ),
+                        'samples_return': samples_return,
+                        'embedder': Embedder(model_ckpt)}
+
+    def get_pgdb_docs(self, query: str) -> pd.DataFrame:
+        emb = self.metadata['embedder'].get_embeddings(query)
+        npemb = emb.detach().cpu().numpy()[0]
+        emb_q = str(list(npemb))
+        nn = pd.read_sql(f"SELECT *,\
+                    1/(embeddings <-> '{emb_q}') as score \
+                    FROM {table2} A ORDER BY \
+                    embeddings <-> '{emb_q}' LIMIT {self.metadata['samples_return']};", 
+                                        self.metadata['new_db_conn'])
+        return nn
+    
+    def _get_relevant_documents(
+        self, query: str, *, run_manager: CallbackManagerForRetrieverRun
+    ) -> List[Document]:
+        # Use your existing retriever to get the documents
+        docdf = self.get_pgdb_docs(query)
+        documents = []
+        for r in docdf.to_dict('records'):
+            documents.append(Document(page_content=r['text'], 
+                                    metadata={k: v for k, v 
+                                                in r.items()
+                                                if k not in ('text',
+                                                                'embeddings')}))
+        return documents
+    
+
+
+contextualize_q_system_prompt = """Given a chat history and the latest user question \
+which might reference context in the chat history, formulate a standalone question \
+which can be understood without the chat history. Do NOT answer the question, \
+just reformulate it if needed and otherwise return it as is."""
+contextualize_q_prompt = ChatPromptTemplate.from_messages(
+    [
+        ("system", contextualize_q_system_prompt),
+        MessagesPlaceholder(variable_name="chat_history"),
+        ("human", "{question}"),
+    ]
+)
+
+mistral_api_key = os.environ.get("MISTRAL_API_KEY")
+llm = ChatMistralAI(mistral_api_key=mistral_api_key)
+contextualize_q_chain = contextualize_q_prompt | llm | StrOutputParser()
+
+def contextualized_question(input: dict):
+    if input.get("chat_history"):
+        return contextualize_q_chain
+    else:
+        return input["question"]
+
+def format_docs(docs):
+    return "\n\n".join(doc.page_content for doc in docs)
+
+qa_system_prompt = """You are an assistant for question-answering tasks. \
+Use the following pieces of retrieved context to answer the question. \
+If you don't know the answer, just say that you don't know. \
+Use three sentences maximum and keep the answer concise.\
+
+{context}"""
+
+qa_prompt = ChatPromptTemplate.from_messages(
+    [
+        ("system", qa_system_prompt),
+        MessagesPlaceholder(variable_name="chat_history"),
+        ("human", "{question}"),
+    ]
+)
+
+retriever = CustomPGRetriever(postgresshost=postgresshost,
+                                pgport=pgport,
+                                pguser=pguser,
+                                pgpassword=pgpassword,
+                                samples_return=samples_return,
+                                model_ckpt=model_ckpt)
+rag_chain = (
+    RunnablePassthrough.assign(
+        context=contextualized_question | retriever | format_docs
+    )
+    | qa_prompt
+    | llm
+)
