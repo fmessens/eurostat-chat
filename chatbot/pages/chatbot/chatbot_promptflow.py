@@ -8,6 +8,7 @@ import time
 
 import pandas as pd
 from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
+from google.cloud import bigquery
 from langchain_mistralai.chat_models import ChatMistralAI
 from dotenv import load_dotenv
 import psycopg2
@@ -82,7 +83,7 @@ def second_prompt(aicontent, query):
     for _, r in all_meta_df.iterrows():
         full_context += r['text'] + '\n\n\n'
 
-    messages = [HumanMessage(content=f"Here are a list of resulting tables based on your search queries:\n\
+    messages = [HumanMessage(content=f"Here are a list of tables that might be relevant:\n\
 '{full_context}'.\n\
  Give a list of table codes in double quotes that you think are relevant to answer the question:\n\n\
  {query} \n\n\
@@ -98,20 +99,31 @@ def third_prompt(aicontent, query):
         password=pgpassword,
     )
     matches = list(set(re.findall(r'"(.*?)"', aicontent)))
-    matchstr = str(tuple([x.replace('\\','').upper() 
-                          for x in matches]))
-    cols = pd.read_sql(f"SELECT * FROM {org_name}.column_metatdata \
-    WHERE table_code IN {matchstr};", new_db_conn)
-    full_content = ''
-    for r in cols.to_dict('records'):
-        full_content += json.dumps(r).replace('{','').replace('}','') +'\n\n'
+    matchesupper = [x.replace('\\','').upper() for x in matches]
+    matchesstr = str(tuple(matchesupper))
+    schemaquery = f"SELECT table_name,\
+    column_name,\
+    data_type,\
+    FROM eurostat_all.COLUMNS_INFO\
+    WHERE table_name IN {matchesstr}"
+    print(schemaquery)
+    colssel = pd.read_gbq(schemaquery,
+                          project_id='neuraldb-proj')
+    print(colssel)
+    colcontent = colssel.to_markdown()
+    extracts = ''
+    for m in matchesupper:
+        df = pd.read_gbq(f"SELECT * FROM eurostat_all.{m} LIMIT 3", project_id='neuraldb-proj')
+        extracts += m +':\n'+ df.to_markdown() + '\n\n\n'
+
     full_prompt = [HumanMessage(content=f'Given the column and table info in the following table:\n\
-{full_content}. \n\
-List the columns to use for answering the question:\n\n\
+{colcontent}. \n\
+And extracts in the following tables:\n\
+{extracts}\n\
+Can you construct a SQL query to answer the question:\n\n\
  {query}.\n\n\
- Please create a list of elements like this "<table_code>.<column_name>".\
- Please list items in duoble quotes and nothing else.')]
-    return full_prompt, cols
+ The dataset is eurostat_all and the SQL dialect is Bigquery.')]
+    return full_prompt, colssel
 
 
 def fourth_prompt(aicontent, query):
@@ -119,6 +131,5 @@ def fourth_prompt(aicontent, query):
 \n\n{aicontent}\n\n\
  Can you construct a SQL query to answer the question:\n\n\
  {query}.\n\n\
- Please provide a SINGLE SQL query and format in markdown.")]
-
-
+ Please provide a single bigquery SQL and format in markdown.\
+ The dataset is called eurostat_all")]

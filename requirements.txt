@@ -26,3 +26,5 @@ transformers
 datasets
 tabulate
 pandas-gbq
+dash-bootstrap-components
+dash-ace

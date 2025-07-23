@@ -47,8 +47,6 @@ def init_callbacks(app):
     def update_display(bot_q, human_q):
         bot_qp = json.loads(bot_q)
         human_qp = json.loads(human_q)
-        print('bot_qp', bot_qp)
-        print('human_qp', human_qp)
         chat_history = ''
         for hq in human_qp:
             chat_history += f'<split>Human: {hq}'
@@ -85,7 +83,6 @@ def init_callbacks(app):
         prevent_initial_call=True,
     )
     def run_chatbot(set_progress, human_q, bot_q, checkv):
-        print('checkv: ', checkv)
         ctx = dash.callback_context
         if not ctx.triggered[0]["prop_id"]=="store-human-conversation.data":
             return [False]
@@ -111,12 +108,13 @@ def init_callbacks(app):
 
             messages += [chat.invoke(messages)]
             set_progress(json.dumps(bot_qp + prep_bot_content(messages)))
-
+            """
             messages += fourth_prompt(messages[-1].content, last_humanq)
             set_progress(json.dumps(bot_qp + prep_bot_content(messages)))
 
             messages += [chat.invoke(messages)]
             set_progress(json.dumps(bot_qp + prep_bot_content(messages)))
+            """
             time.sleep(10)
         else:
             chat_history = []

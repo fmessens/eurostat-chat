@@ -7,7 +7,7 @@ from google.cloud import bigquery
 import urllib
 
 from auth.decorators import requires_auth
-
+from settings import bq_proj
 
 def init_query_callb(app):
     @app.callback(
@@ -61,7 +61,7 @@ def init_query_callb(app):
             raise PreventUpdate
 
         
-        df = pd.read_gbq(query, bqclient)
+        df = pd.read_gbq(query, project_id=bq_proj)
         print(df)
         # Display the query result
         return ([dash_table.DataTable(data=df.to_dict('records'),
